@@ -18,7 +18,7 @@ USAGE:
     python27 Join.py <input_path_left> <{input_format_left}> <key_columns_left>
             <input_path_right> <{input_format_right}> <key_columns_right>
             [-o <output_path> {output_format}] [-t <join_type>] [-s <sort>]
-            [-h <headers>]
+            [-h <headers>] [-i <integers>]
 
 
 
@@ -71,15 +71,27 @@ OPTIONAL:
     
     sort
         
-        (DEFAULT: Y)
+        (DEFAULT: forward)
         
-        Whether or not to sort by key.
+        Whether or not to sort by key, and how to sort. Acceptable options are:
+            no      - No sorting. Retain original order.
+            forward - Forward sorting.
+                          (Ascending value, alphabetical order)
+            reverse - Reverse sorting.
+                          (Descending value, reverse alphabetical order)
     
     headers
         
         (DEFAULT: N)
         
         Whether or not the first row should be treated as column headers.
+    
+    integers
+        
+        (DEFAULT: Y)
+        
+        Whether or not to treat columns which look like integers as integers for
+        the purpose of sorting.
 
 
 
@@ -96,7 +108,7 @@ USAGE:
     python27 Join.py <input_path_left> <{input_format_left}> <key_columns_left>
             <input_path_right> <{input_format_right}> <key_columns_right>
             [-o <output_path> {output_format}] [-t <join_type>] [-s <sort>]
-            [-h <headers>]
+            [-h <headers>] [-i <integers>]
 """
 
 
@@ -118,8 +130,9 @@ PRINT_METRICS = True
 "NOTE: altering these will not alter the values displayed in the HELP DOC"
 
 DEFAULT__join = 1 #INNER
-DEFAULT__sort = True
+DEFAULT__sort = 2 #FORWARD
 DEFAULT__headers = False
+DEFAULT__integers = True
 
 
 
@@ -138,6 +151,11 @@ class JOIN:
     RIGHT=3
     OUTER=4
     XOR=5
+
+class SORT:
+    NO=1
+    FORWARD=2
+    REVERSE=3
 
 
 
@@ -192,6 +210,12 @@ Please specify one of:
     yes
     no"""
 
+STR__invalid_sort = """
+ERROR: Invalid sorting method: {s}
+Please specify one of:
+    no
+    forward
+    reverse"""
 
 
 STR__metrics_lines = """
@@ -220,6 +244,9 @@ LIST__help = ["-h", "-H", "-help", "-Help", "-HELP"]
 
 LIST__yes = ["Y", "y", "YES", "Yes", "yes", "T", "t", "TRUE", "True", "true"]
 LIST__no = ["N", "n", "NO", "No", "no", "F", "f", "FALSE", "False", "false"]
+
+LIST__forward = ["F", "f", "FORWARD", "Forward", "forward"]
+LIST__reverse = ["R", "r", "REVERSE", "Reverse", "reverse"]
 
 LIST__tsv = ["\t", "T", "t", "TSV", "Tsv", "tsv", "TAB", "Tab", "tab"]
 LIST__csv = [",", "C", "c", "CSV", "Csv", "csv", "COMMA", "Comma", "comma"]
@@ -261,16 +288,254 @@ DICT__join_str = {
     JOIN.LEFT = "LEFT_JOIN"
     JOIN.RIGHT = "RIGHT_JOIN"
     JOIN.OUTER = "OUTER_JOIN"
-    JOIN.XOR = "XOR
+    JOIN.XOR = "XOR"}
 
 
 
 # File Processing Code #########################################################
 
 def Join_Tables(path_l, delim_l, keys_l, path_r, delim_r, keys_r, path_out,
-            delim_out, join, sort, headers)
+            delim_out, join, sort, headers, integers):
+    """
+    Return an exit code of 1/2 if table width is inconsistent in the left/right
+    table.
+    """
+    printP(STR__join_begin)
+    
+    # Key types and width check
+    key_types, width_l, width_r = Get_Key_Types()
+    if type(key_types) == int: return key_types
+    if not integers:key_types = len(keys_l) * [False]
+    
+    # Headers and blanks
+    header_values = []
+    if headers:
+        header_values = Get_Header_Values(path_l, delim_l, keys_l, path_r,
+            delim_r, keys_r, join)
+    blank_l = width_l*delim_out
+    blank_r = width_r*delim_out
+    
+    # Process inputs
+    data_l = Process_Table(path_l, delim_l, keys_l, key_types, headers)
+    data_r = Process_Table(path_r, delim_r, keys_r, key_types, headers)
+    dict_l, keys_l = data_l
+    dict_r, keys_r = data_r
+    
+    # Sorting
+    if sort == SORT.FORWARD:
+        keys_l = sorted(keys_l, None, None, False)
+    elif sort == SORT.REVERSE:
+        keys_l = sorted(keys_l, None, None, True)
+    
+    # Join tables
+    Write_Table__DICTs(dict_l, keys_l, blank_l, dict_r, keys_r, blank_r,
+            path_out, delim_out, join, headers)
+    
+    #
+    return 0
+
+def Get_Key_Types(path_l, delim_l, keys_l, path_r, delim_r, keys_r, headers):
+    """
+    Return 1/2 if the left/right table has an inconsistent number of columns.
+    """
+    # Verify widths and get key types
+    keys_l, width_l = Get_Key_Types_(path_l, delim_l, keys_l, headers)
+    if not keys_l: return 1
+    keys_r, width_r = Get_Key_Types_(path_r, delim_r, keys_r, headers)
+    if not keys_r: return 2
+    # Combine key types
+    results = []
+    range_ = range(len(keys_l))
+    for i in range_:
+        if keys_l[i] and keys_r[i]: results.append(True)
+        else: results.append(False)
+    #
+    return [results, width_l, width_r]
+
+def Get_Key_Types_(filepath, delim, keys, headers):
     """
     """
+    # Setup
+    results = len(keys)*[True]
+    key_len = len(keys)
+    range_ = range(key_len)
+    width = 0
+    # Width
+    f = open(filepath, "U")
+    line = f.readline()
+    values = line.split(delim)
+    width = len(values)
+    f.close()
+    # Processing
+    f = open(filepath, "U")
+    if headers: f.readline()
+    line = f.readline()
+    while line:
+        # Initial processing
+        values = line.split(delim)
+        if values[-1][-1] == "\n": values[-1] = values[-1][:-1]
+        # Values
+        for i in range_:
+            key_i = keys[i]
+            value = values[key_i]
+            if not value.isdigit(): results[i] = False
+        # Next
+        line = f.readline()
+    # Close and return
+    f.close()
+    return [results, width-key_len]
+
+def Get_Header_Values(path_l, delim_l, keys_l, path_r, delim_r, keys_r, join):
+    """
+    """
+    results = []
+    # Values
+    f_l = open(path_l, "U")
+    line_l = f.readline()
+    values_l = line_l.split(delim_l)
+    f_l.close()
+    f_r = open(path_r, "U")
+    line_r = f.readline()
+    values_r = line_r.split(delim_r)
+    f_r.close()
+    # Key headers
+    if join in [JOIN.INNER, JOIN.LEFT, JOIN.OUTER, JOIN.XOR]:
+        for i in keys_l:
+            value = values_l[i]
+            results.append(value)
+    else: # Right join
+        for i in keys_r:
+            value = values_r[i]
+            results.append(value)
+    # Sort and pop
+    keys_sorted_l = sorted(keys_l, None, None, True)
+    for i in keys_sorted_l:
+        values_l.pop(l)
+    keys_sorted_r = sorted(keys_r, None, None, True)
+    for i in keys_sorted_r:
+        values_r.pop(l)
+    # Add and return
+    results = results + values_l + values_r
+    return results
+
+def Process_Table(filepath, delim, keys, key_types, headers):
+    """
+    Return [dictionary, keys]
+    """
+    # Setup
+    results_data = {}
+    results_keys = []
+    #
+    range_ = range(len(keys))
+    f = open(filepath, "U")
+    # Sort for popping
+    sorted_keys = sorted(keys, None, None, True)
+    # Header and first line
+    if headers: f.readline()
+    line = f.readline()
+    # Iterate
+    while line:
+        # String to values
+        values = line.split(delim)
+        if values[-1][-1] == "\n": values[-1] = values[-1][:-1]
+        # Key
+        key = []
+        for i in range_:
+            key_i = keys[i]
+            is_int = key_types[i]
+            value = values[key_i]
+            if is_int: value = int(value)
+            key.append(value)
+        key = tuple(key)
+        # Pop
+        for i in sorted_keys: values.pop(i)
+        # Process
+        results_data[key] = values
+        results_keys.append(key)
+        # Next
+        line = f.readline()
+    #
+    f.close()
+    return [results_data, results_keys]
+
+def Write_Table__DICTs(dict_l, keys_l, blank_l, dict_r, keys_r, blank_r,
+            path_out, delim_out, join, headers):
+    """
+    """
+    # Setup
+    o = open(path_out, "w")
+    # Headers
+    if headers:
+        header_str = delim_out.join(headers) + "\n"
+        o.write(header_str)
+    # Join type
+    if join in JOIN.INNER:
+        all_keys = []
+        for key in keys_l:
+            if key in dict_r: all_keys.append(key)
+    elif join == JOIN.LEFT:
+        all_keys = keys_l
+    elif join == JOIN.RIGHT:
+        all_keys = keys_r
+    elif join == JOIN.OUTER:
+        all_keys = keys_l
+        for k in keys_r:
+            if k not in dict_l:
+                all_keys.append(k)
+    else: # XOR
+        all_keys = []
+        for key in keys_l:
+            if key not in dict_r: all_keys.append(key)
+        for key in keys_r:
+            if key not in dict_l: all_keys.append(key)
+    # Iterate 
+    for key in all_keys:
+        key_list = list(key)
+        key_str = delim_out.join(key_list)
+        o.write(key_str)
+        if join == JOIN.INNER:
+            val_l = dict_l[key]
+            str_l = delim_out.join(val_l)
+            if str_l: o.write(delim_out + str_l)
+            val_r = dict_r[key]
+            str_r = delim_out.join(val_r)
+            if str_r: o.write(delim_out + str_r)
+        elif join == JOIN.LEFT:
+            val_l = dict_l[key]
+            str_l = delim_out.join(val_l)
+            if str_l: o.write(delim_out + str_l)
+            if key in dict_r:
+                val_r = dict_r[key]
+                str_r = delim_out.join(val_r)
+                if str_r: o.write(delim_out + str_r)
+            else:
+                o.write(blank_r)
+        elif join == JOIN.RIGHT:
+            if key in dict_r:
+                val_l = dict_l[key]
+                str_l = delim_out.join(val_l)
+                if str_l: o.write(delim_out + str_l)
+            else:
+                o.write(blank_l)
+            val_r = dict_r[key]
+            str_r = delim_out.join(val_r)
+            if str_r: o.write(delim_out + str_r)
+        else: # Outer or Xor
+            if key in dict_r:
+                val_l = dict_l[key]
+                str_l = delim_out.join(val_l)
+                if str_l: o.write(delim_out + str_l)
+            else:
+                o.write(blank_l)
+            if key in dict_r:
+                val_r = dict_r[key]
+                str_r = delim_out.join(val_r)
+                if str_r: o.write(delim_out + str_r)
+            else:
+                o.write(blank_r)
+        o.write("\n")
+    # 
+    o.close()
     return
 
 
@@ -348,6 +613,7 @@ def Parse_Command_Line_Input__Join_Tables(raw_command_line_input):
     join = DEFAULT__join
     sort = DEFAULT__sort
     headers = DEFAULT__headers
+    integers = DEFAULT__integers
     
     # Parse the rest
     while inputs:
@@ -356,7 +622,7 @@ def Parse_Command_Line_Input__Join_Tables(raw_command_line_input):
             if arg in ["-o"]:
                 arg2 = inputs.pop(0)
                 arg3 = inputs.pop(0)
-            elif arg in ["-t", "-s", "-h"]:
+            elif arg in ["-t", "-s", "-h", "-i"]:
                 arg2 = inputs.pop(0)
             else:
                 printE(STR__invalid_flag.format(s = arg))
@@ -381,13 +647,19 @@ def Parse_Command_Line_Input__Join_Tables(raw_command_line_input):
             else:
                 printE(STR__invalid_file_format.format(io = "output", s = arg3))
                 return 1
-        elif arg in ["-s", "-h"]:
+        elif arg in ["-s", "-h", "-i"]:
             bool_ = Validate_Bool(arg2)
             if bool_ == None:
                 printE(STR__invalid_bool.format(s = arg2))
+                return 1
             else:
-                if arg == "-s": sort = bool_
-                else: headers = bool_
+                if arg == "-h": headers = bool_
+                elif arg == "-i": integers = bool_
+        elif arg in ["-s"]:
+            sort = Validate_Sort(arg2)
+            if not sort:
+                printE(STR__invalid_sort.format(s = arg2))
+                return 1
         else: # "-j" Flag - Join options
             join = DICT__join.get(arg2, 0)
             if not join:
@@ -401,7 +673,7 @@ def Parse_Command_Line_Input__Join_Tables(raw_command_line_input):
     
     # Run program
     exit_code = Join_Tables(path_l, delim_l, keys_l, path_r, delim_r, keys_r,
-            path_out, delim_out, join, sort, headers)
+            path_out, delim_out, join, sort, headers, integers)
     
     # Irregular exit codes
     
@@ -581,6 +853,23 @@ def Validate_Bool(string):
     if string in LIST__yes: return True
     elif string in LIST__no: return False
     else: return None
+
+
+
+def Validate_Sort(string)
+    """
+    Validate and return the enum corresponding to the type of sorting to be
+    used.
+    Return 0 if no valid string was provided.
+    
+    @string
+        (str)
+        A string denoting the sorting method.
+    """
+    if string in LIST__no: return SORT.NO
+    if string in LIST__forward: return SORT.FORWARD
+    if string in LIST__reverse: return SORT.REVERSE
+    return 0
 
 
 
