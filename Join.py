@@ -17,7 +17,7 @@ USAGE:
     
     python27 Join.py <input_path_left> <{input_format_left}> <key_columns_left>
             <input_path_right> <{input_format_right}> <key_columns_right>
-            [-o <output_path> {output_format}] [-t <join_type>] [-s <sort>]
+            [-o <output_path> {output_format}] [-j <join_type>] [-s <sort>]
             [-h <headers>] [-i <integers>]
 
 
@@ -97,17 +97,31 @@ OPTIONAL:
 
 EXAMPLES EXPLANATION:
     
+    1:
+    Straight forward join of two table files.
     
+    2:
+    Outer join of two table files, sorted in reverse order. Integer-like fields
+    are treated as integers.
+    
+    3:
+    Sorted left join of two table files with headers. Output file and format
+    specified.
 
 EXAMPLES:
     
+    python27 Join.py table_1.tsv tsv 1,2 table_2.csv csv 3,2
     
+    python27 Join.py table_1.tsv tsv 1,2 table_2.csv csv 3,2 -j O -i Y -s R
+    
+    python27 Join.py table_3.tsv tsv 1,2 table_4.csv csv 3,2 -j L -h Y -o
+            merged_data.txt ssv
 
 USAGE:
     
     python27 Join.py <input_path_left> <{input_format_left}> <key_columns_left>
             <input_path_right> <{input_format_right}> <key_columns_right>
-            [-o <output_path> {output_format}] [-t <join_type>] [-s <sort>]
+            [-o <output_path> {output_format}] [-j <join_type>] [-s <sort>]
             [-h <headers>] [-i <integers>]
 """
 
@@ -219,7 +233,7 @@ Please specify one of:
 
 
 STR__metrics_lines = """
-    METRICS:
+    JOIN METRICS:
 
      Lines (O): {A}
      Lines (L): {B} ({C}%)
@@ -227,14 +241,20 @@ STR__metrics_lines = """
 
     Columns(O): {F}
     Columns(L): {G}
-    Columns(R): {H}
-"""
+    Columns(R): {H}"""
 
 STR__parsing_args = "\nParsing arguments..."
 
 STR__join_begin = "\nRunning Join..."
 
 STR__join_complete = "\nJoin successfully finished."
+
+STR__invalid_left_width = """
+ERROR: Left table file does not have a consistent number of columns:
+    {s}"""
+STR__invalid_right_width = """
+ERROR: Right table file does not have a consistent number of columns:
+    {s}"""
 
 
 
@@ -284,11 +304,11 @@ DICT__delim_format = {
     " ": "ssb"}
 
 DICT__join_str = {
-    JOIN.INNER = "INNER_JOIN"
-    JOIN.LEFT = "LEFT_JOIN"
-    JOIN.RIGHT = "RIGHT_JOIN"
-    JOIN.OUTER = "OUTER_JOIN"
-    JOIN.XOR = "XOR"}
+    JOIN.INNER: "INNER_JOIN",
+    JOIN.LEFT: "LEFT_JOIN",
+    JOIN.RIGHT: "RIGHT_JOIN",
+    JOIN.OUTER: "OUTER_JOIN",
+    JOIN.XOR: "XOR"}
 
 
 
@@ -297,13 +317,94 @@ DICT__join_str = {
 def Join_Tables(path_l, delim_l, keys_l, path_r, delim_r, keys_r, path_out,
             delim_out, join, sort, headers, integers):
     """
+    Join two tables (delimited table formatted files) and create a new table
+    (also in a delimiated table format file).
     Return an exit code of 1/2 if table width is inconsistent in the left/right
     table.
+    
+    In the output table, the key columns will be first, followed by the non-key
+    columns of the left table in their original order, followed by the non-key
+    columns of the right table in their original order.
+    
+    @path_l
+            (str - filepath)
+            The filepath of the left table file.
+    @delim_l
+            (str)
+            The delimiter to be used for the left table file. File formats and
+            their corresponding delimiters are as follows:
+                TSV - "\t" (tab character)
+                CSV - ","  (comma character)
+                SSV - " "  (whitespace character)
+    @keys_l
+            (list<int>)
+            A list of the column numbers for the columns which comprise the key
+            for the left table.
+            (Uses a 0-index system.)
+    @path_r
+            (str - filepath)
+            The filepath of the right table file.
+    @delim_r
+            (str)
+            The delimiter to be used for the right table file. File formats and
+            their corresponding delimiters are as follows:
+                TSV - "\t" (tab character)
+                CSV - ","  (comma character)
+                SSV - " "  (whitespace character)
+    @keys_r
+            (list<int>)
+            A list of the column numbers for the columns which comprise the key
+            for the right table.
+            (Uses a 0-index system.)
+    @path_out
+            (str - filepath)
+            The filepath of the file where the output will be written into.
+    @delim_out
+            (str)
+            The delimiter to be used for the output table file. File formats and
+            their corresponding delimiters are as follows:
+                TSV - "\t" (tab character)
+                CSV - ","  (comma character)
+                SSV - " "  (whitespace character)
+    @join
+            (int - ENUM)
+            An integer denoting what kind of join operation will be performed.
+            The options are as follows
+                1 - Inner join
+                2 - Left join (left outer join)
+                3 - Right join (right outer join)
+                4 - Outer join (full outer join)
+                5 - XOR (XOR operation)
+    @sort
+            (int - ENUM)
+            An integer denoting what kind of sorting should be performed on the
+            table keys.
+                1 - No sorting
+                2 - Forward sorting:
+                        Sort integers in ascending order
+                        Sort strings in alphabetical order
+                3 - Reversed sorting:
+                        Sort integers in descending order
+                        Sort strings in reversed alphabetical order
+    @headers
+            (bool)
+            Whether or not there are headers in the input files. Headers will be
+            retained in the output file. The column headers for the key columns
+            will use their corresponding column headers in the LEFT table file
+            unless RIGHT OUTER JOIN was specified.
+    @integers
+            (bool)
+            Whether or not to treat values from columns, which only contain
+            digit-only strings, as integers instead of strings.
+    
+    Join_Tables(str, str, str, str, str, str, str, str, int, int, bool, bool)
+            -> int
     """
     printP(STR__join_begin)
     
     # Key types and width check
-    key_types, width_l, width_r = Get_Key_Types()
+    key_types, width_k, width_l, width_r = Get_Key_Types(path_l, delim_l,
+            keys_l, path_r, delim_r, keys_r, headers)
     if type(key_types) == int: return key_types
     if not integers:key_types = len(keys_l) * [False]
     
@@ -318,8 +419,8 @@ def Join_Tables(path_l, delim_l, keys_l, path_r, delim_r, keys_r, path_out,
     # Process inputs
     data_l = Process_Table(path_l, delim_l, keys_l, key_types, headers)
     data_r = Process_Table(path_r, delim_r, keys_r, key_types, headers)
-    dict_l, keys_l = data_l
-    dict_r, keys_r = data_r
+    dict_l, keys_l, rows_l = data_l
+    dict_r, keys_r, rows_r = data_r
     
     # Sorting
     if sort == SORT.FORWARD:
@@ -328,15 +429,77 @@ def Join_Tables(path_l, delim_l, keys_l, path_r, delim_r, keys_r, path_out,
         keys_l = sorted(keys_l, None, None, True)
     
     # Join tables
-    Write_Table__DICTs(dict_l, keys_l, blank_l, dict_r, keys_r, blank_r,
-            path_out, delim_out, join, headers)
+    metrics_out = Write_Table__DICTs(dict_l, keys_l, blank_l, dict_r, keys_r,
+            blank_r, path_out, delim_out, join, headers)
+    metrics_in = [rows_l, rows_r]
+    metrics_widths = [width_k, width_l, width_r]
+    
+    # Metrics
+    Report_Metrics(metrics_out+metrics_in+metrics_widths)
     
     #
+    printP(STR__join_complete)
     return 0
+
+
 
 def Get_Key_Types(path_l, delim_l, keys_l, path_r, delim_r, keys_r, headers):
     """
+    Return a list of:
+        Booleans. Each boolean describes the two columns specified by the key in
+        the key lists in the same indexed position. The boolean will be True if
+        all values in both columns can be converted to an integer, and False
+        otherwise.
+        3 integers describing the number of key columns, the number of non-key
+        columns in the left table, and the number of non-key columns in the
+        right table.
     Return 1/2 if the left/right table has an inconsistent number of columns.
+    
+    Example:
+        If the left table's keys are [0,1,2]
+        And the right table's keys are [5,0,1]
+        And the output of this function is [False, True, False]
+        Then that would mean that all values, in column 1 of the left table and
+        all values in column 0 of the right table, can be converted to integers.
+    
+    @path_l
+            (str - filepath)
+            The filepath of the left table file.
+    @delim_l
+            (str)
+            The delimiter to be used for the left table file. File formats and
+            their corresponding delimiters are as follows:
+                TSV - "\t" (tab character)
+                CSV - ","  (comma character)
+                SSV - " "  (whitespace character)
+    @keys_l
+            (list<int>)
+            A list of the column numbers for the columns which comprise the key
+            for the left table.
+            (Uses a 0-index system.)
+    @path_r
+            (str - filepath)
+            The filepath of the right table file.
+    @delim_r
+            (str)
+            The delimiter to be used for the right table file. File formats and
+            their corresponding delimiters are as follows:
+                TSV - "\t" (tab character)
+                CSV - ","  (comma character)
+                SSV - " "  (whitespace character)
+    @keys_r
+            (list<int>)
+            A list of the column numbers for the columns which comprise the key
+            for the right table.
+            (Uses a 0-index system.)
+    @headers
+            (bool)
+            Whether or not there are headers in the input files. If this is set
+            to True, the first line in each file will be excluded from
+            consideration for the analysis.
+    
+    Get_Key_Types(str, str, str, str, str, str, bool) ->
+            [list<bool>, int, int, int]
     """
     # Verify widths and get key types
     keys_l, width_l = Get_Key_Types_(path_l, delim_l, keys_l, headers)
@@ -345,15 +508,19 @@ def Get_Key_Types(path_l, delim_l, keys_l, path_r, delim_r, keys_r, headers):
     if not keys_r: return 2
     # Combine key types
     results = []
-    range_ = range(len(keys_l))
+    width_k = len(keys_l)
+    range_ = range(width_k)
     for i in range_:
         if keys_l[i] and keys_r[i]: results.append(True)
         else: results.append(False)
     #
-    return [results, width_l, width_r]
+    return [results, width_k, width_l, width_r]
 
 def Get_Key_Types_(filepath, delim, keys, headers):
     """
+    Subfunction of Get_Key_Types() but only for one table.
+    
+    Get_Key_Types(str, str, str, bool) -> [list<bool>, int]
     """
     # Setup
     results = len(keys)*[True]
@@ -387,6 +554,50 @@ def Get_Key_Types_(filepath, delim, keys, headers):
 
 def Get_Header_Values(path_l, delim_l, keys_l, path_r, delim_r, keys_r, join):
     """
+    Return the column headers of the input files, as a list in the order
+    appropriate for the output file.
+    
+    @path_l
+            (str - filepath)
+            The filepath of the left table file.
+    @delim_l
+            (str)
+            The delimiter to be used for the left table file. File formats and
+            their corresponding delimiters are as follows:
+                TSV - "\t" (tab character)
+                CSV - ","  (comma character)
+                SSV - " "  (whitespace character)
+    @keys_l
+            (list<int>)
+            A list of the column numbers for the columns which comprise the key
+            for the left table.
+            (Uses a 0-index system.)
+    @path_r
+            (str - filepath)
+            The filepath of the right table file.
+    @delim_r
+            (str)
+            The delimiter to be used for the right table file. File formats and
+            their corresponding delimiters are as follows:
+                TSV - "\t" (tab character)
+                CSV - ","  (comma character)
+                SSV - " "  (whitespace character)
+    @keys_r
+            (list<int>)
+            A list of the column numbers for the columns which comprise the key
+            for the right table.
+            (Uses a 0-index system.)
+    @join
+            (int - ENUM)
+            An integer denoting what kind of join operation will be performed.
+            The options are as follows
+                1 - Inner join
+                2 - Left join (left outer join)
+                3 - Right join (right outer join)
+                4 - Outer join (full outer join)
+                5 - XOR (XOR operation)
+    
+    Get_Header_Values(str, str, str, str, str, str, int) -> list<str>
     """
     results = []
     # Values
@@ -420,11 +631,45 @@ def Get_Header_Values(path_l, delim_l, keys_l, path_r, delim_r, keys_r, join):
 
 def Process_Table(filepath, delim, keys, key_types, headers):
     """
-    Return [dictionary, keys]
+    Read in the data in a table file and store that data in a dictionary, with
+    the dictionary key being a tuple composed of the values of the table's keys.
+    Return that dictionary, a list of all the keys in the order in which they
+    occurred, and the number of rows of data in the file.
+    
+    @path
+            (str - filepath)
+            The filepath of the table file.
+    @delim
+            (str)
+            The delimiter to be used for the table file. File formats and their
+            corresponding delimiters are as follows:
+                TSV - "\t" (tab character)
+                CSV - ","  (comma character)
+                SSV - " "  (whitespace character)
+    @keys
+            (list<int>)
+            A list of the column numbers for the columns which comprise the key
+            for the table.
+            (Uses a 0-index system.)
+    @key_types
+            (list<bool>)
+            A list of booleans corresponding to the columns specified by [keys].
+            A "True" indicates that that column should be treated as integers
+            while a "False" indicates that that column should be treated as
+            strings.
+    @headers
+            (bool)
+            Whether or not there are headers in the input file. If this is set
+            to True, the first line in each file will be excluded from
+            consideration for the analysis.
+    
+    Process_Table(str, str, list<int>, list<bool>, bool) ->
+            [dict<tuple:list<str>>, list<str>, int]
     """
     # Setup
     results_data = {}
     results_keys = []
+    rows = 0
     #
     range_ = range(len(keys))
     f = open(filepath, "U")
@@ -435,6 +680,7 @@ def Process_Table(filepath, delim, keys, key_types, headers):
     line = f.readline()
     # Iterate
     while line:
+        rows += 1
         # String to values
         values = line.split(delim)
         if values[-1][-1] == "\n": values[-1] = values[-1][:-1]
@@ -456,20 +702,86 @@ def Process_Table(filepath, delim, keys, key_types, headers):
         line = f.readline()
     #
     f.close()
-    return [results_data, results_keys]
+    return [results_data, results_keys, rows]
 
 def Write_Table__DICTs(dict_l, keys_l, blank_l, dict_r, keys_r, blank_r,
             path_out, delim_out, join, headers):
     """
+    Write the data, obtained from the input table files, into the output file.
+    Return the metrics of the operation as a list. The integers in this list
+    represent:
+        
+    
+    @dict_l
+            (dict<tuple:list<str>>)
+            A dictionary containing the data from the the left table.
+            The dictionary keys are tuples created from the values in the key
+            columns. The dictionary values are lists of the values in the
+            non-key columns.
+    @keys_l
+            (list<str>)
+            A list of the keys from the left table either sorted or unsorted
+            based on the user specifications.
+    @blank_l
+            (str)
+            The string to write to the write file if no data exists in the left
+            file which corresponds to the querying key.
+    @dict_r
+            (dict<tuple:list<str>>)
+            A dictionary containing the data from the the right table.
+            The dictionary keys are tuples created from the values in the key
+            columns. The dictionary values are lists of the values in the
+            non-key columns.
+    @keys_r
+            (list<str>)
+            A list of the keys from the right table either sorted or unsorted
+            based on the user specifications.
+    @blank_r
+            (str)
+            The string to write to the write file if no data exists in the right
+            file which corresponds to the querying key.
+    @path_out
+            (str - filepath)
+            The filepath of the file where the output will be written into.
+    @delim_out
+            (str)
+            The delimiter to be used for the output table file. File formats and
+            their corresponding delimiters are as follows:
+                TSV - "\t" (tab character)
+                CSV - ","  (comma character)
+                SSV - " "  (whitespace character)
+    @join
+            (int - ENUM)
+            An integer denoting what kind of join operation will be performed.
+            The options are as follows
+                1 - Inner join
+                2 - Left join (left outer join)
+                3 - Right join (right outer join)
+                4 - Outer join (full outer join)
+                5 - XOR (XOR operation)
+    @headers
+            (bool)
+            Whether or not there are headers in the input files. Headers will be
+            retained in the output file. The column headers for the key columns
+            will use their corresponding column headers in the LEFT table file
+            unless RIGHT OUTER JOIN was specified.
+        
+    Write_Table__DICTs(dict<tuple:list<str>>, list<tuple>, str,
+            dict<tuple:list<str>>, list<tuple>, str, str, str, int, bool) ->
+            [int, int, int]
     """
     # Setup
     o = open(path_out, "w")
+    # Metrics
+    lines_o = 0
+    lines_l_o = 0
+    lines_r_o = 0
     # Headers
     if headers:
         header_str = delim_out.join(headers) + "\n"
         o.write(header_str)
     # Join type
-    if join in JOIN.INNER:
+    if join == JOIN.INNER:
         all_keys = []
         for key in keys_l:
             if key in dict_r: all_keys.append(key)
@@ -488,12 +800,17 @@ def Write_Table__DICTs(dict_l, keys_l, blank_l, dict_r, keys_r, blank_r,
             if key not in dict_r: all_keys.append(key)
         for key in keys_r:
             if key not in dict_l: all_keys.append(key)
+    lines_o = len(all_keys)
     # Iterate 
     for key in all_keys:
-        key_list = list(key)
+        key_list = []
+        for k in key:
+            key_list.append(str(k))
         key_str = delim_out.join(key_list)
         o.write(key_str)
         if join == JOIN.INNER:
+            lines_l_o += 1
+            lines_r_o += 1
             val_l = dict_l[key]
             str_l = delim_out.join(val_l)
             if str_l: o.write(delim_out + str_l)
@@ -501,17 +818,21 @@ def Write_Table__DICTs(dict_l, keys_l, blank_l, dict_r, keys_r, blank_r,
             str_r = delim_out.join(val_r)
             if str_r: o.write(delim_out + str_r)
         elif join == JOIN.LEFT:
+            lines_l_o += 1
             val_l = dict_l[key]
             str_l = delim_out.join(val_l)
             if str_l: o.write(delim_out + str_l)
             if key in dict_r:
+                lines_r_o += 1
                 val_r = dict_r[key]
                 str_r = delim_out.join(val_r)
                 if str_r: o.write(delim_out + str_r)
             else:
                 o.write(blank_r)
         elif join == JOIN.RIGHT:
-            if key in dict_r:
+            lines_r_o += 1
+            if key in dict_l:
+                lines_l_o += 1
                 val_l = dict_l[key]
                 str_l = delim_out.join(val_l)
                 if str_l: o.write(delim_out + str_l)
@@ -521,22 +842,86 @@ def Write_Table__DICTs(dict_l, keys_l, blank_l, dict_r, keys_r, blank_r,
             str_r = delim_out.join(val_r)
             if str_r: o.write(delim_out + str_r)
         else: # Outer or Xor
-            if key in dict_r:
+            if key in dict_l:
+                lines_l_o += 1
                 val_l = dict_l[key]
                 str_l = delim_out.join(val_l)
                 if str_l: o.write(delim_out + str_l)
             else:
                 o.write(blank_l)
             if key in dict_r:
+                lines_r_o += 1
                 val_r = dict_r[key]
                 str_r = delim_out.join(val_r)
                 if str_r: o.write(delim_out + str_r)
             else:
                 o.write(blank_r)
         o.write("\n")
-    # 
+    #
     o.close()
-    return
+    return [lines_o, lines_l_o, lines_r_o]
+
+def Report_Metrics(metrics):
+    """
+    Takes a set of numbers representing the metrics of the join operation and
+    print the metrics of the join operation into the commandline.
+    
+    @metrics
+            (list<int>)
+            A list of integers showing:
+                * The number of lines of data in the output table.
+                * The number of lines of data in the left table outputted.
+                * The number of lines of data in the right table outputted.
+                * The number of lines of data in the left table.
+                * The number of lines of data in the right table.
+                * The number of columns in the key.
+                * The number of columns in the left table.
+                * The number of columns in the right table.
+    
+    Print_Metrics(list<int>) -> None
+    """
+    # Unpack
+    lines_o = metrics[0]
+    lines_l_o = metrics[1]
+    lines_r_o = metrics[2]
+    lines_l = metrics[3]
+    lines_r = metrics[4]
+    columns_k = metrics[5]
+    columns_l = metrics[6]
+    columns_r = metrics[7]
+    # Calculate
+    percent_l = (lines_l_o*100.0)/lines_l
+    percent_r = (lines_r_o*100.0)/lines_r
+    columns_a = columns_k + columns_l + columns_r
+    columns_l = columns_k + columns_l
+    columns_r = columns_k + columns_r
+    # Strings
+    lines_o = str(lines_o)
+    lines_l = str(lines_l)
+    percent_l = str(percent_l) + "00"
+    lines_r = str(lines_r)
+    percent_r = str(percent_r) + "00"
+    columns_a = str(columns_a)
+    columns_l = str(columns_l)
+    columns_r = str(columns_r)
+    # Trim
+    index_l = percent_l.find(".")
+    percent_l = percent_l[:index_l+3]
+    index_r = percent_r.find(".")
+    percent_r = percent_r[:index_l+3]
+    # Pad
+    max_size = max([len(lines_o), len(lines_l), len(lines_r), len(columns_a),
+            len(columns_l), len(columns_r)])
+    lines_o = ((" "*max_size) + lines_o)[-max_size:]
+    lines_l = ((" "*max_size) + lines_l)[-max_size:]
+    lines_r = ((" "*max_size) + lines_r)[-max_size:]
+    columns_a = ((" "*max_size) + columns_a)[-max_size:]
+    columns_l = ((" "*max_size) + columns_l)[-max_size:]
+    columns_r = ((" "*max_size) + columns_r)[-max_size:]
+    # Print
+    printM(STR__metrics_lines.format(A = lines_o, B = lines_l, C = percent_l,
+            D = lines_r, E = percent_r, F = columns_a, G = columns_l,
+            H = columns_r))
 
 
 
@@ -550,7 +935,7 @@ def Parse_Command_Line_Input__Join_Tables(raw_command_line_input):
     printP(STR__parsing_args)
     # Remove the runtime environment variable and program name from the inputs
     inputs = Strip_Non_Inputs(raw_command_line_input)
-
+    
     # No inputs
     if not inputs:
         printE(STR__no_inputs)
@@ -561,7 +946,7 @@ def Parse_Command_Line_Input__Join_Tables(raw_command_line_input):
     if inputs[0] in LIST__help:
         print(HELP_DOC)
         return 0
-
+    
     # Initial validation
     if len(inputs) < 6:
         printE(STR__insufficient_inputs)
@@ -581,7 +966,7 @@ def Parse_Command_Line_Input__Join_Tables(raw_command_line_input):
     if not delim_l:
         printE(STR__invalid_file_format.format(io = "input", s = inputs[1]))
         return 1
-    delib_r = Validate_File_Format(inputs[4])
+    delim_r = Validate_File_Format(inputs[4])
     if not delim_r:
         printE(STR__invalid_file_format.format(io = "input", s = inputs[4]))
         return 1
@@ -590,7 +975,7 @@ def Parse_Command_Line_Input__Join_Tables(raw_command_line_input):
     if not keys_l:
         printE(STR__invalid_keys.format(s = inputs[2]))
         return 1
-    keys_r = Validate_Keys(inputs[2])
+    keys_r = Validate_Keys(inputs[5])
     if not keys_r:
         printE(STR__invalid_keys.format(s = inputs[5]))
         return 1
@@ -605,11 +990,9 @@ def Parse_Command_Line_Input__Join_Tables(raw_command_line_input):
     inputs.pop(0)
     inputs.pop(0)
     
-    
-    
     # Set up rest of the parsing
     path_out = ""
-    format_out = delim_in # Default behaviour
+    delim_out = delim_l # Default behaviour
     join = DEFAULT__join
     sort = DEFAULT__sort
     headers = DEFAULT__headers
@@ -622,7 +1005,7 @@ def Parse_Command_Line_Input__Join_Tables(raw_command_line_input):
             if arg in ["-o"]:
                 arg2 = inputs.pop(0)
                 arg3 = inputs.pop(0)
-            elif arg in ["-t", "-s", "-h", "-i"]:
+            elif arg in ["-j", "-s", "-h", "-i"]:
                 arg2 = inputs.pop(0)
             else:
                 printE(STR__invalid_flag.format(s = arg))
@@ -647,7 +1030,7 @@ def Parse_Command_Line_Input__Join_Tables(raw_command_line_input):
             else:
                 printE(STR__invalid_file_format.format(io = "output", s = arg3))
                 return 1
-        elif arg in ["-s", "-h", "-i"]:
+        elif arg in ["-h", "-i"]:
             bool_ = Validate_Bool(arg2)
             if bool_ == None:
                 printE(STR__invalid_bool.format(s = arg2))
@@ -676,6 +1059,12 @@ def Parse_Command_Line_Input__Join_Tables(raw_command_line_input):
             path_out, delim_out, join, sort, headers, integers)
     
     # Irregular exit codes
+    if exit_code == 1:
+        printE(STR__invalid_left_width.format(s = path_l))
+        return 1
+    if exit_code == 2:
+        printE(STR__invalid_right_width.format(s = path_r))
+        return 2
     
     # Safe exit
     return 0
@@ -699,7 +1088,6 @@ def Validate_Read_Path(filepath):
 
 
 
-
 def Generate_Output_Filename(path_l, path_r, join, delim):
     """
     Generate a filepath for the output based on the input files, the join
@@ -707,7 +1095,8 @@ def Generate_Output_Filename(path_l, path_r, join, delim):
     
     Generate_Output_Filename(str, str, int) -> str
     """
-    dirname = os.path.dirname(path_l)
+    abs_path = os.path.abspath(path_l)
+    dirname = os.path.dirname(abs_path)
     file_l = Get_File_Name(path_l)
     file_r = Get_File_Name(path_r)
     join_str = DICT__join_str[join]
@@ -808,7 +1197,7 @@ def Validate_Keys(string):
     result = []
     temp = string.split(",")
     for s in temp:
-        num = Validate_Column_Number
+        num = Validate_Column_Number(s)
         if num == 0: return []
         result.append(num-1)
     return result
@@ -856,7 +1245,7 @@ def Validate_Bool(string):
 
 
 
-def Validate_Sort(string)
+def Validate_Sort(string):
     """
     Validate and return the enum corresponding to the type of sorting to be
     used.
