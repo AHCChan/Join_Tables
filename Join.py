@@ -249,12 +249,13 @@ STR__join_begin = "\nRunning Join..."
 
 STR__join_complete = "\nJoin successfully finished."
 
-STR__invalid_left_width = """
-ERROR: Left table file does not have a consistent number of columns:
-    {s}"""
-STR__invalid_right_width = """
-ERROR: Right table file does not have a consistent number of columns:
-    {s}"""
+
+
+STR__invalid_width = """
+ERROR: {s} table file does not have a consistent number of columns:
+    {p}"""
+STR__invalid_key = """
+ERROR: Keys for {s} table file are not unique."""
 
 
 
@@ -320,6 +321,8 @@ def Join_Tables(path_l, delim_l, keys_l, path_r, delim_r, keys_r, path_out,
     Join two tables (delimited table formatted files) and create a new table
     (also in a delimiated table format file).
     Return an exit code of 1/2 if table width is inconsistent in the left/right
+    table.
+    Return an exit code of 3/4 if the table key is non-unique in the left/right
     table.
     
     In the output table, the key columns will be first, followed by the non-key
@@ -418,7 +421,9 @@ def Join_Tables(path_l, delim_l, keys_l, path_r, delim_r, keys_r, path_out,
     
     # Process inputs
     data_l = Process_Table(path_l, delim_l, keys_l, key_types, headers)
+    if not data_l: return 3
     data_r = Process_Table(path_r, delim_r, keys_r, key_types, headers)
+    if not data_r: return 4
     dict_l, keys_l, rows_l = data_l
     dict_r, keys_r, rows_r = data_r
     
@@ -500,6 +505,7 @@ def Get_Key_Types(path_l, delim_l, keys_l, path_r, delim_r, keys_r, headers):
     
     Get_Key_Types(str, str, str, str, str, str, bool) ->
             [list<bool>, int, int, int]
+    Get_Key_Types(str, str, str, str, str, str, bool) -> int
     """
     # Verify widths and get key types
     keys_l, width_l = Get_Key_Types_(path_l, delim_l, keys_l, headers)
@@ -521,6 +527,7 @@ def Get_Key_Types_(filepath, delim, keys, headers):
     Subfunction of Get_Key_Types() but only for one table.
     
     Get_Key_Types(str, str, str, bool) -> [list<bool>, int]
+    Get_Key_Types(str, str, str, str, str, str, bool) -> int
     """
     # Setup
     results = len(keys)*[True]
@@ -635,6 +642,7 @@ def Process_Table(filepath, delim, keys, key_types, headers):
     the dictionary key being a tuple composed of the values of the table's keys.
     Return that dictionary, a list of all the keys in the order in which they
     occurred, and the number of rows of data in the file.
+    Return an empty list if the key is non-unique.
     
     @path
             (str - filepath)
@@ -665,6 +673,7 @@ def Process_Table(filepath, delim, keys, key_types, headers):
     
     Process_Table(str, str, list<int>, list<bool>, bool) ->
             [dict<tuple:list<str>>, list<str>, int]
+    Process_Table(str, str, list<int>, list<bool>, bool) -> []
     """
     # Setup
     results_data = {}
@@ -693,6 +702,7 @@ def Process_Table(filepath, delim, keys, key_types, headers):
             if is_int: value = int(value)
             key.append(value)
         key = tuple(key)
+        if key in results_data: return []
         # Pop
         for i in sorted_keys: values.pop(i)
         # Process
@@ -1060,14 +1070,16 @@ def Parse_Command_Line_Input__Join_Tables(raw_command_line_input):
     
     # Irregular exit codes
     if exit_code == 1:
-        printE(STR__invalid_left_width.format(s = path_l))
-        return 1
+        printE(STR__invalid_width.format(p = path_l, s = "Left"))
     if exit_code == 2:
-        printE(STR__invalid_right_width.format(s = path_r))
-        return 2
+        printE(STR__invalid_width.format(p = path_r, s = "Right"))
+    if exit_code == 3:
+        printE(STR__invalid_key.format(s = "left"))
+    if exit_code == 4:
+        printE(STR__invalid_key.format(s = "right"))
     
     # Safe exit
-    return 0
+    return exit_code
 
 
 
