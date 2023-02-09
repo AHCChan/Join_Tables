@@ -435,7 +435,7 @@ def Join_Tables(path_l, delim_l, keys_l, path_r, delim_r, keys_r, path_out,
     
     # Join tables
     metrics_out = Write_Table__DICTs(dict_l, keys_l, blank_l, dict_r, keys_r,
-            blank_r, path_out, delim_out, join, headers)
+            blank_r, path_out, delim_out, join, header_values)
     metrics_in = [rows_l, rows_r]
     metrics_widths = [width_k, width_l, width_r]
     
@@ -609,12 +609,14 @@ def Get_Header_Values(path_l, delim_l, keys_l, path_r, delim_r, keys_r, join):
     results = []
     # Values
     f_l = open(path_l, "U")
-    line_l = f.readline()
+    line_l = f_l.readline()
     values_l = line_l.split(delim_l)
+    if values_l[-1][-1] == "\n": values_l[-1] = values_l[-1][:-1]
     f_l.close()
     f_r = open(path_r, "U")
-    line_r = f.readline()
+    line_r = f_r.readline()
     values_r = line_r.split(delim_r)
+    if values_r[-1][-1] == "\n": values_r[-1] = values_r[-1][:-1]
     f_r.close()
     # Key headers
     if join in [JOIN.INNER, JOIN.LEFT, JOIN.OUTER, JOIN.XOR]:
@@ -628,10 +630,10 @@ def Get_Header_Values(path_l, delim_l, keys_l, path_r, delim_r, keys_r, join):
     # Sort and pop
     keys_sorted_l = sorted(keys_l, None, None, True)
     for i in keys_sorted_l:
-        values_l.pop(l)
+        values_l.pop(i)
     keys_sorted_r = sorted(keys_r, None, None, True)
     for i in keys_sorted_r:
-        values_r.pop(l)
+        values_r.pop(i)
     # Add and return
     results = results + values_l + values_r
     return results
@@ -715,7 +717,7 @@ def Process_Table(filepath, delim, keys, key_types, headers):
     return [results_data, results_keys, rows]
 
 def Write_Table__DICTs(dict_l, keys_l, blank_l, dict_r, keys_r, blank_r,
-            path_out, delim_out, join, headers):
+            path_out, delim_out, join, header_values):
     """
     Write the data, obtained from the input table files, into the output file.
     Return the metrics of the operation as a list. The integers in this list
@@ -769,12 +771,11 @@ def Write_Table__DICTs(dict_l, keys_l, blank_l, dict_r, keys_r, blank_r,
                 3 - Right join (right outer join)
                 4 - Outer join (full outer join)
                 5 - XOR (XOR operation)
-    @headers
-            (bool)
-            Whether or not there are headers in the input files. Headers will be
-            retained in the output file. The column headers for the key columns
-            will use their corresponding column headers in the LEFT table file
-            unless RIGHT OUTER JOIN was specified.
+    @header_values
+            (list<str>)
+            A list of the column header strings for the output file. An empty
+            list is supplied here if no headers are to be written to the output
+            file.
         
     Write_Table__DICTs(dict<tuple:list<str>>, list<tuple>, str,
             dict<tuple:list<str>>, list<tuple>, str, str, str, int, bool) ->
@@ -787,8 +788,8 @@ def Write_Table__DICTs(dict_l, keys_l, blank_l, dict_r, keys_r, blank_r,
     lines_l_o = 0
     lines_r_o = 0
     # Headers
-    if headers:
-        header_str = delim_out.join(headers) + "\n"
+    if header_values:
+        header_str = delim_out.join(header_values) + "\n"
         o.write(header_str)
     # Join type
     if join == JOIN.INNER:
