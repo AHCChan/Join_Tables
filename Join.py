@@ -254,6 +254,9 @@ STR__join_complete = "\nJoin successfully finished."
 STR__invalid_width = """
 ERROR: {s} table file does not have a consistent number of columns:
     {p}"""
+STR__non_unique_key = """
+Identified non-unique key:
+    {s}"""
 STR__invalid_key = """
 ERROR: Keys for {s} table file are not unique."""
 
@@ -704,7 +707,9 @@ def Process_Table(filepath, delim, keys, key_types, headers):
             if is_int: value = int(value)
             key.append(value)
         key = tuple(key)
-        if key in results_data: return []
+        if key in results_data:
+            printE(STR__non_unique_key.format(s = key))
+            return []
         # Pop
         for i in sorted_keys: values.pop(i)
         # Process
