@@ -375,7 +375,7 @@ def Join_Tables(path_l, delim_l, keys_l, path_r, delim_r, keys_r, path_out,
     @join
             (int - ENUM)
             An integer denoting what kind of join operation will be performed.
-            The options are as follows
+            The options are as follows:
                 1 - Inner join
                 2 - Left join (left outer join)
                 3 - Right join (right outer join)
