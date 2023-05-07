@@ -707,14 +707,17 @@ def Process_Table(filepath, delim, keys, key_types, headers):
             if is_int: value = int(value)
             key.append(value)
         key = tuple(key)
-        if key in results_data:
+        if key == ("",): # Empty key from bad Excel exports
+            pass
+        elif key in results_data: # Non-unique key
             printE(STR__non_unique_key.format(s = key))
             return []
-        # Pop
-        for i in sorted_keys: values.pop(i)
-        # Process
-        results_data[key] = values
-        results_keys.append(key)
+        else: # Unique, non-empty key
+            # Pop
+            for i in sorted_keys: values.pop(i)
+            # Process
+            results_data[key] = values
+            results_keys.append(key)
         # Next
         line = f.readline()
     #
