@@ -1,6 +1,6 @@
 HELP_DOC = """
 JOIN TABLES
-(version 1.0)
+(version 2.0)
 by Angelo Chan
 
 This is a program for joining two table files into one table file. A new table
@@ -138,6 +138,8 @@ PRINT_ERRORS = True
 PRINT_PROGRESS = True
 PRINT_METRICS = True
 
+WARN_UNEQUAL_DUPLICATES = True
+
 
 
 # Defaults #####################################################################
@@ -262,6 +264,12 @@ ERROR: Keys for {s} table file are not unique."""
 
 
 
+STR__unequal_duplicates = """
+WARNING: Duplicate entries with the same key but different values detected for:
+    {s}"""
+
+
+
 # Lists ########################################################################
 
 LIST__help = ["-h", "-H", "-help", "-Help", "-HELP"]
@@ -313,6 +321,13 @@ DICT__join_str = {
     JOIN.RIGHT: "RIGHT_JOIN",
     JOIN.OUTER: "OUTER_JOIN",
     JOIN.XOR: "XOR"}
+
+DICT__repeat_permissions = {
+    JOIN.INNER: [False, False],
+    JOIN.LEFT: [True, False],
+    JOIN.RIGHT: [False, True],
+    JOIN.OUTER: [False, False],
+    JOIN.XOR: [True, True]}
 
 
 
@@ -422,10 +437,13 @@ def Join_Tables(path_l, delim_l, keys_l, path_r, delim_r, keys_r, path_out,
     blank_l = width_l*delim_out
     blank_r = width_r*delim_out
     
+    # Repeats
+    rep_l, rep_r = DICT__repeat_permissions[join]
+    
     # Process inputs
-    data_l = Process_Table(path_l, delim_l, keys_l, key_types, headers)
+    data_l = Process_Table(path_l, delim_l, keys_l, key_types, headers, rep_l)
     if not data_l: return 3
-    data_r = Process_Table(path_r, delim_r, keys_r, key_types, headers)
+    data_r = Process_Table(path_r, delim_r, keys_r, key_types, headers, rep_r)
     if not data_r: return 4
     dict_l, keys_l, rows_l = data_l
     dict_r, keys_r, rows_r = data_r
@@ -641,13 +659,18 @@ def Get_Header_Values(path_l, delim_l, keys_l, path_r, delim_r, keys_r, join):
     results = results + values_l + values_r
     return results
 
-def Process_Table(filepath, delim, keys, key_types, headers):
+def Process_Table(filepath, delim, keys, key_types, headers, repeats):
     """
     Read in the data in a table file and store that data in a dictionary, with
     the dictionary key being a tuple composed of the values of the table's keys.
     Return that dictionary, a list of all the keys in the order in which they
     occurred, and the number of rows of data in the file.
     Return an empty list if the key is non-unique.
+    
+    When repeats are allowed, a key may return the results of multiple rows of
+    data as a multi-element list. When repeats are not allowed, a key will
+    return a single-element list, with that single element being the data of the
+    row.
     
     @path
             (str - filepath)
@@ -675,9 +698,20 @@ def Process_Table(filepath, delim, keys, key_types, headers):
             Whether or not there are headers in the input file. If this is set
             to True, the first line in each file will be excluded from
             consideration for the analysis.
+    @repeat
+            (bool)
+            Whether or not duplicate entries (as determined by the key) are
+            allowed. If yes, the key will appear multiple times in the output
+            list of keys.
+            The net result of this will be that the duplicate entry may appear
+            multiple times in the output.
+            It is important to note that the values for the last instance of
+            an entry with a particular key will be used for all instances. If
+            two entries have the same key but different values, this will result
+            in inaccuracies.
     
     Process_Table(str, str, list<int>, list<bool>, bool) ->
-            [dict<tuple:list<str>>, list<str>, int]
+            [dict<tuple<str>:list<list<str>>>, list<tuple<str>>, int]
     Process_Table(str, str, list<int>, list<bool>, bool) -> []
     """
     # Setup
@@ -709,14 +743,20 @@ def Process_Table(filepath, delim, keys, key_types, headers):
         key = tuple(key)
         if key == ("",): # Empty key from bad Excel exports
             pass
-        elif key in results_data: # Non-unique key
+        elif key in results_data and not repeats: # Non-unique key
             printE(STR__non_unique_key.format(s = key))
             return []
-        else: # Unique, non-empty key
+        else: # Valid key
             # Pop
             for i in sorted_keys: values.pop(i)
             # Process
-            results_data[key] = values
+            if key in results_data:
+                results_data[key].append(values)
+                if results_data[key] != values:
+                    if WARN_UNEQUAL_DUPLICATES:
+                        print(STR__unequal_duplicates.format(s = key))
+            else:
+                results_data[key] = [values]
             results_keys.append(key)
         # Next
         line = f.readline()
@@ -733,7 +773,7 @@ def Write_Table__DICTs(dict_l, keys_l, blank_l, dict_r, keys_r, blank_r,
         
     
     @dict_l
-            (dict<tuple:list<str>>)
+            (dict<tuple<str>:list<list<str>>>)
             A dictionary containing the data from the the left table.
             The dictionary keys are tuples created from the values in the key
             columns. The dictionary values are lists of the values in the
@@ -747,7 +787,7 @@ def Write_Table__DICTs(dict_l, keys_l, blank_l, dict_r, keys_r, blank_r,
             The string to write to the write file if no data exists in the left
             file which corresponds to the querying key.
     @dict_r
-            (dict<tuple:list<str>>)
+            (dict<tuple<str>:list<list<str>>>)
             A dictionary containing the data from the the right table.
             The dictionary keys are tuples created from the values in the key
             columns. The dictionary values are lists of the values in the
@@ -820,6 +860,11 @@ def Write_Table__DICTs(dict_l, keys_l, blank_l, dict_r, keys_r, blank_r,
         for key in keys_r:
             if key not in dict_l: all_keys.append(key)
     lines_o = len(all_keys)
+    # Duplicate handler
+    registrar_l = {}
+    registrar_r = {}
+    for key in keys_l: registrar_l[key] = 0
+    for key in keys_r: registrar_r[key] = 0
     # Iterate 
     for key in all_keys:
         key_list = []
@@ -830,47 +875,78 @@ def Write_Table__DICTs(dict_l, keys_l, blank_l, dict_r, keys_r, blank_r,
         if join == JOIN.INNER:
             lines_l_o += 1
             lines_r_o += 1
-            val_l = dict_l[key]
+            val_l = dict_l[key][0]
             str_l = delim_out.join(val_l)
             if str_l: o.write(delim_out + str_l)
-            val_r = dict_r[key]
+            val_r = dict_r[key][0]
             str_r = delim_out.join(val_r)
             if str_r: o.write(delim_out + str_r)
         elif join == JOIN.LEFT:
+            #
+            index_l = registrar_l[key]
+            registrar_l[key] += 1
+            #
             lines_l_o += 1
-            val_l = dict_l[key]
+            val_l = dict_l[key][index_l]
             str_l = delim_out.join(val_l)
             if str_l: o.write(delim_out + str_l)
             if key in dict_r:
                 lines_r_o += 1
-                val_r = dict_r[key]
+                val_r = dict_r[key][0]
                 str_r = delim_out.join(val_r)
                 if str_r: o.write(delim_out + str_r)
             else:
                 o.write(blank_r)
         elif join == JOIN.RIGHT:
+            #
+            index_r = registrar_r[key]
+            registrar_r[key] += 1
+            #
             lines_r_o += 1
             if key in dict_l:
                 lines_l_o += 1
-                val_l = dict_l[key]
+                val_l = dict_l[key][0]
                 str_l = delim_out.join(val_l)
                 if str_l: o.write(delim_out + str_l)
             else:
                 o.write(blank_l)
-            val_r = dict_r[key]
+            val_r = dict_r[key][index_r]
             str_r = delim_out.join(val_r)
             if str_r: o.write(delim_out + str_r)
-        else: # Outer or Xor
+        elif join == JOIN.OUTER: # Outer
             if key in dict_l:
                 lines_l_o += 1
-                val_l = dict_l[key]
+                val_l = dict_l[key][0]
                 str_l = delim_out.join(val_l)
                 if str_l: o.write(delim_out + str_l)
             else:
                 o.write(blank_l)
             if key in dict_r:
                 lines_r_o += 1
-                val_r = dict_r[key]
+                val_r = dict_r[key][0]
+                str_r = delim_out.join(val_r)
+                if str_r: o.write(delim_out + str_r)
+            else:
+                o.write(blank_r)
+        else: # XOR
+            if key in dict_l:
+                #
+                index_l = registrar_l[key]
+                registrar_l[key] += 1
+                #
+                lines_l_o += 1
+                val_l = dict_l[key][index_l]
+                str_l = delim_out.join(val_l)
+                if str_l: o.write(delim_out + str_l)
+            else:
+                o.write(blank_l)
+            if key in dict_r:
+                #
+                index_r = registrar_r[key]
+                registrar_r[key] += 1
+                #
+                lines_r_o += 1
+                val_r = dict_r[key][index_r]
                 str_r = delim_out.join(val_r)
                 if str_r: o.write(delim_out + str_r)
             else:

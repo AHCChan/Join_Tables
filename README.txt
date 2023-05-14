@@ -23,6 +23,9 @@ This is a simple program for joining two table files, in a similar manner to
 how SQL and other such relational databases execute join functions between two
 tables.
 
+However, users may have duplicate keys in the case of LEFT and RIGHT joins in 
+the LEFT and RIGHT tables respectively.
+
 
 
 REQUIREMENTS (SYSTEM)
