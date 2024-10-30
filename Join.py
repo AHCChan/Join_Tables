@@ -985,8 +985,14 @@ def Report_Metrics(metrics):
     columns_l = metrics[6]
     columns_r = metrics[7]
     # Calculate
-    percent_l = (lines_l_o*100.0)/lines_l
-    percent_r = (lines_r_o*100.0)/lines_r
+    if lines_l == 0:
+        percent_l = 0.0
+    else:
+        percent_l = (lines_l_o*100.0)/lines_l
+    if lines_r == 0:
+        percent_r = 0.0
+    else:
+        percent_r = (lines_r_o*100.0)/lines_r
     columns_a = columns_k + columns_l + columns_r
     columns_l = columns_k + columns_l
     columns_r = columns_k + columns_r
