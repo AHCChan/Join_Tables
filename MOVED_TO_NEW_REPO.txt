@@ -1,0 +1,3 @@
+
+NOTICE: Join.py has been moved over to the Table_Tools repo. Latest versions 
+of this program can be found there.
