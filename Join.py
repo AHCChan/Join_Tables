@@ -1,6 +1,6 @@
 HELP_DOC = """
 JOIN TABLES
-(version 2.0)
+(version 3.0)
 by Angelo Chan
 
 This is a program for joining two table files into one table file. A new table
@@ -18,7 +18,7 @@ USAGE:
     python27 Join.py <input_path_left> <{input_format_left}> <key_columns_left>
             <input_path_right> <{input_format_right}> <key_columns_right>
             [-o <output_path> {output_format}] [-j <join_type>] [-s <sort>]
-            [-h <headers>] [-i <integers>]
+            [-h Y|N] [-i Y|N] [-l Y|N] [-r Y|N]
 
 
 
@@ -80,18 +80,30 @@ OPTIONAL:
             reverse - Reverse sorting.
                           (Descending value, reverse alphabetical order)
     
-    headers
+    (-h)
         
         (DEFAULT: N)
         
         Whether or not the first row should be treated as column headers.
     
-    integers
+    (-i)
         
         (DEFAULT: Y)
         
         Whether or not to treat columns which look like integers as integers for
         the purpose of sorting.
+    
+    (-l)
+        
+        (DEFAULT: N)
+        
+        Whether or not duplicate keys are allowed in the left table.
+    
+    (-r)
+        
+        (DEFAULT: N)
+        
+        Whether or not duplicate keys are allowed in the right table.
 
 
 
@@ -122,7 +134,7 @@ USAGE:
     python27 Join.py <input_path_left> <{input_format_left}> <key_columns_left>
             <input_path_right> <{input_format_right}> <key_columns_right>
             [-o <output_path> {output_format}] [-j <join_type>] [-s <sort>]
-            [-h <headers>] [-i <integers>]
+            [-h Y|N] [-i Y|N] [-l Y|N] [-r Y|N]
 """
 
 
@@ -139,6 +151,7 @@ PRINT_PROGRESS = True
 PRINT_METRICS = True
 
 WARN_UNEQUAL_DUPLICATES = True
+UNEQUAL_DUPLICATE_EXAMPLES = 10
 
 
 
@@ -149,6 +162,8 @@ DEFAULT__join = 1 #INNER
 DEFAULT__sort = 2 #FORWARD
 DEFAULT__headers = False
 DEFAULT__integers = True
+DEFAULT__left_dup = False
+DEFAULT__right_dup = False
 
 
 
@@ -266,6 +281,8 @@ ERROR: Keys for {s} table file are not unique."""
 
 STR__unequal_duplicates = """
 WARNING: Duplicate entries with the same key but different values detected for:
+    {n} entries
+Duplicate keys include:
     {s}"""
 
 
@@ -331,10 +348,16 @@ DICT__repeat_permissions = {
 
 
 
+# Internals ####################################################################
+
+UNEQUAL_DUPLICATE_EXAMPLES = UNEQUAL_DUPLICATE_EXAMPLES + 1
+
+
+
 # File Processing Code #########################################################
 
 def Join_Tables(path_l, delim_l, keys_l, path_r, delim_r, keys_r, path_out,
-            delim_out, join, sort, headers, integers):
+            delim_out, join, sort, headers, integers, dup_l, dup_r):
     """
     Join two tables (delimited table formatted files) and create a new table
     (also in a delimiated table format file).
@@ -417,6 +440,12 @@ def Join_Tables(path_l, delim_l, keys_l, path_r, delim_r, keys_r, path_out,
             (bool)
             Whether or not to treat values from columns, which only contain
             digit-only strings, as integers instead of strings.
+    @dup_l
+            (bool)
+            Whether or not duplicates would be allowed in the left table.
+    @dup_r
+            (bool)
+            Whether or not duplicates would be allowed in the right table.
     
     Join_Tables(str, str, str, str, str, str, str, str, int, int, bool, bool)
             -> int
@@ -437,13 +466,10 @@ def Join_Tables(path_l, delim_l, keys_l, path_r, delim_r, keys_r, path_out,
     blank_l = width_l*delim_out
     blank_r = width_r*delim_out
     
-    # Repeats
-    rep_l, rep_r = DICT__repeat_permissions[join]
-    
     # Process inputs
-    data_l = Process_Table(path_l, delim_l, keys_l, key_types, headers, rep_l)
+    data_l = Process_Table(path_l, delim_l, keys_l, key_types, headers, dup_l)
     if not data_l: return 3
-    data_r = Process_Table(path_r, delim_r, keys_r, key_types, headers, rep_r)
+    data_r = Process_Table(path_r, delim_r, keys_r, key_types, headers, dup_r)
     if not data_r: return 4
     dict_l, keys_l, rows_l = data_l
     dict_r, keys_r, rows_r = data_r
@@ -718,6 +744,9 @@ def Process_Table(filepath, delim, keys, key_types, headers, repeats):
     results_data = {}
     results_keys = []
     rows = 0
+    warning_list = []
+    warning_list_count = 0
+    warning_list_count_u = 0
     #
     range_ = range(len(keys))
     f = open(filepath, "U")
@@ -753,13 +782,26 @@ def Process_Table(filepath, delim, keys, key_types, headers, repeats):
             if key in results_data:
                 results_data[key].append(values)
                 if results_data[key] != values:
-                    if WARN_UNEQUAL_DUPLICATES:
-                        print(STR__unequal_duplicates.format(s = key))
+                    warning_list_count += 1
+                    if warning_list_count_u < UNEQUAL_DUPLICATE_EXAMPLES:
+                        if key not in warning_list:
+                            warning_list_count_u += 1
+                            if (warning_list_count_u ==
+                                    UNEQUAL_DUPLICATE_EXAMPLES):
+                                warning_list.append("...")
+                            else:
+                                warning_list.append(key)
             else:
                 results_data[key] = [values]
             results_keys.append(key)
         # Next
         line = f.readline()
+    # Duplicates warning
+    if WARN_UNEQUAL_DUPLICATES:
+        warning_list = [str(i) for i in warning_list]
+        warning_string = "\n    ".join(warning_list)
+        printM(STR__unequal_duplicates.format(n=warning_list_count,
+                s=warning_string))
     #
     f.close()
     return [results_data, results_keys, rows]
@@ -1098,6 +1140,8 @@ def Parse_Command_Line_Input__Join_Tables(raw_command_line_input):
     sort = DEFAULT__sort
     headers = DEFAULT__headers
     integers = DEFAULT__integers
+    dup_l = DEFAULT__left_dup
+    dup_r = DEFAULT__right_dup
     
     # Parse the rest
     while inputs:
@@ -1106,7 +1150,7 @@ def Parse_Command_Line_Input__Join_Tables(raw_command_line_input):
             if arg in ["-o"]:
                 arg2 = inputs.pop(0)
                 arg3 = inputs.pop(0)
-            elif arg in ["-j", "-s", "-h", "-i"]:
+            elif arg in ["-j", "-s", "-h", "-i", "-l", "-r"]:
                 arg2 = inputs.pop(0)
             else:
                 printE(STR__invalid_flag.format(s = arg))
@@ -1131,7 +1175,7 @@ def Parse_Command_Line_Input__Join_Tables(raw_command_line_input):
             else:
                 printE(STR__invalid_file_format.format(io = "output", s = arg3))
                 return 1
-        elif arg in ["-h", "-i"]:
+        elif arg in ["-h", "-i", "-l", "-r"]:
             bool_ = Validate_Bool(arg2)
             if bool_ == None:
                 printE(STR__invalid_bool.format(s = arg2))
@@ -1139,6 +1183,8 @@ def Parse_Command_Line_Input__Join_Tables(raw_command_line_input):
             else:
                 if arg == "-h": headers = bool_
                 elif arg == "-i": integers = bool_
+                elif arg == "-l": dup_l = bool_
+                elif arg == "-r": dup_r = bool_
         elif arg in ["-s"]:
             sort = Validate_Sort(arg2)
             if not sort:
@@ -1157,7 +1203,7 @@ def Parse_Command_Line_Input__Join_Tables(raw_command_line_input):
     
     # Run program
     exit_code = Join_Tables(path_l, delim_l, keys_l, path_r, delim_r, keys_r,
-            path_out, delim_out, join, sort, headers, integers)
+            path_out, delim_out, join, sort, headers, integers, dup_l, dup_r)
     
     # Irregular exit codes
     if exit_code == 1:
